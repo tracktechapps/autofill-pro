@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoFill Pro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <h1>AutoFill Pro</h1>
+      </div>
+      <div class="header-actions">
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme">🌙</button>
+        <span class="version">v2.1</span>
+      </div>
+    </header>
+
+    <!-- Tab Navigation -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="fill">📝 Fill</button>
+      <button class="tab-btn" data-tab="data">📊 Data</button>
+      <button class="tab-btn" data-tab="scan">🔍 Scan</button>
+      <button class="tab-btn" data-tab="mappings">🔗 Maps</button>
+      <button class="tab-btn" data-tab="history">📋 History</button>
+    </div>
+
+
+    <!-- Fill Tab Content -->
+    <div class="tab-content active" id="tabFill">
+      <!-- Mode Toggle -->
+      <div class="mode-toggle">
+        <button class="mode-btn active" data-mode="sequential">
+          <span class="mode-icon">🔄</span>
+          <span>Sequential</span>
+        </button>
+        <button class="mode-btn" data-mode="quick">
+          <span class="mode-icon">⚡</span>
+          <span>Quick Fill</span>
+        </button>
+      </div>
+
+      <!-- File Upload Section -->
+      <div class="upload-section">
+        <div class="upload-zone" id="uploadZone">
+          <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.json,.txt,.tsv" hidden>
+          <div class="upload-content">
+            <span class="upload-icon">📁</span>
+            <p class="upload-text">Drop file here or <span class="browse-link">browse</span></p>
+            <p class="upload-hint">CSV, Excel, JSON, TXT files</p>
+          </div>
+        </div>
+        <div class="file-info hidden" id="fileInfo">
+          <div class="file-details">
+            <span class="file-icon">📊</span>
+            <div class="file-meta">
+              <span class="file-name" id="fileName">data.xlsx</span>
+              <span class="file-records" id="fileRecords">50 records</span>
+            </div>
+          </div>
+          <button class="btn-icon" id="removeFile" title="Remove file">✕</button>
+        </div>
+      </div>
+
+      <!-- Progress Section (Sequential Mode) -->
+      <div class="progress-section" id="progressSection">
+        <div class="progress-header">
+          <span class="progress-label">Progress</span>
+          <span class="progress-count" id="progressCount">0 / 0</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+        </div>
+        <div class="progress-status" id="progressStatus">No data loaded</div>
+      </div>
+
+      <!-- Record Selector (Quick Fill Mode) -->
+      <div class="record-selector hidden" id="recordSelector">
+        <label class="selector-label">Select Record</label>
+        <div class="selector-controls">
+          <button class="btn-nav" id="prevRecord">←</button>
+          <input type="number" class="record-input" id="recordInput" value="1" min="1">
+          <span class="record-total">/ <span id="totalRecords">0</span></span>
+          <button class="btn-nav" id="nextRecord">→</button>
+        </div>
+      </div>
+
+      <!-- File Uploads Required -->
+      <div class="uploads-required hidden" id="uploadsRequired">
+        <div class="uploads-header">
+          <span class="uploads-icon">📎</span>
+          <span class="uploads-label">File Uploads Required</span>
+        </div>
+        <div class="uploads-list" id="uploadsList"></div>
+      </div>
+
+      <!-- Data Preview -->
+      <div class="preview-section hidden" id="previewSection">
+        <div class="preview-header">
+          <span class="preview-label">Preview</span>
+          <button class="btn-text" id="togglePreview">Show</button>
+        </div>
+        <div class="preview-table-wrap hidden" id="previewWrap">
+          <table class="preview-table" id="previewTable">
+            <thead id="previewHead"></thead>
+            <tbody id="previewBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <!-- Sequential Controls -->
+        <div class="seq-controls" id="seqControls">
+          <button class="btn btn-secondary" id="btnPrev" disabled>
+            <span>← Prev</span>
+          </button>
+          <button class="btn btn-primary" id="btnFill" disabled>
+            <span>Fill & Review</span>
+          </button>
+          <button class="btn btn-secondary" id="btnSkip" disabled>
+            <span>Skip →</span>
+          </button>
+        </div>
+
+        <!-- Quick Fill Controls -->
+        <div class="quick-controls hidden" id="quickControls">
+          <button class="btn btn-primary btn-full" id="btnQuickFill" disabled>
+            <span>⚡ Fill & Review</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Manager Tab Content -->
+    <div class="tab-content" id="tabData">
+      <div class="data-manager-section">
+
+        <!-- Mode Toggle -->
+        <div class="mode-section">
+          <div class="mode-toggle-container">
+            <button class="mode-btn active" id="modeStandard" data-mode="standard">
+              📊 Standard Mode
+            </button>
+            <button class="mode-btn" id="modePilot" data-mode="pilot">
+              🎯 Pilot Mode
+            </button>
+          </div>
+          <p class="mode-description" id="modeDescription">Compare and merge two datasets</p>
+        </div>
+
+        <!-- Standard Mode Datasets (existing) -->
+        <div class="standard-mode-section" id="standardModeSection">
+          <!-- Dataset 1 -->
+          <div class="dataset-container">
+            <div class="dataset-header">
+              <span class="dataset-label">📁 Dataset 1</span>
+              <span class="dataset-count" id="dataset1Count">0 records</span>
+            </div>
+            <div class="dataset-upload-zone" id="dataset1Zone">
+              <input type="file" id="dataset1Input" accept=".csv,.xlsx,.xls,.json,.txt,.tsv" multiple hidden>
+              <span class="upload-mini-icon">📂</span>
+              <span class="upload-mini-text">Drop files or <span class="browse-link">browse</span></span>
+            </div>
+            <div class="dataset-files hidden" id="dataset1Files"></div>
+          </div>
+
+          <!-- Dataset 2 -->
+          <div class="dataset-container">
+            <div class="dataset-header">
+              <span class="dataset-label">📁 Dataset 2</span>
+              <span class="dataset-count" id="dataset2Count">0 records</span>
+            </div>
+            <div class="dataset-upload-zone" id="dataset2Zone">
+              <input type="file" id="dataset2Input" accept=".csv,.xlsx,.xls,.json,.txt,.tsv" multiple hidden>
+              <span class="upload-mini-icon">📂</span>
+              <span class="upload-mini-text">Drop files or <span class="browse-link">browse</span></span>
+            </div>
+            <div class="dataset-files hidden" id="dataset2Files"></div>
+          </div>
+        </div>
+
+        <!-- Pilot Mode Section (new) -->
+        <div class="pilot-mode-section hidden" id="pilotModeSection">
+          <!-- Pilot Dataset -->
+          <div class="dataset-container pilot-container">
+            <div class="dataset-header">
+              <span class="dataset-label">🎯 Pilot Data (Key Records)</span>
+              <span class="dataset-count" id="pilotCount">0 records</span>
+              <button class="btn-text btn-danger" id="clearPilotBtn">Clear</button>
+            </div>
+            <p class="dataset-hint">Records here determine which rows appear in output</p>
+            <div class="dataset-upload-zone" id="pilotZone">
+              <input type="file" id="pilotInput" accept=".csv,.xlsx,.xls,.json,.txt,.tsv" multiple hidden>
+              <span class="upload-mini-icon">🎯</span>
+              <span class="upload-mini-text">Drop pilot files or <span class="browse-link">browse</span></span>
+            </div>
+            <div class="dataset-files hidden" id="pilotFiles"></div>
+          </div>
+
+          <!-- Reference Datasets -->
+          <div class="references-container">
+            <div class="references-header">
+              <span class="references-label">📂 Reference Datasets (Data Sources)</span>
+              <div class="references-actions">
+                <button class="btn-text btn-danger" id="clearAllRefsBtn">Clear All</button>
+                <button class="btn-text" id="addReferenceBtn">+ Add References</button>
+              </div>
+            </div>
+            <p class="dataset-hint">Data from matched records will be merged into output</p>
+            <div class="references-list" id="referencesList">
+              <!-- Reference datasets added dynamically -->
+            </div>
+            <input type="file" id="referenceInput" accept=".csv,.xlsx,.xls,.json,.txt,.tsv" multiple hidden>
+
+          </div>
+
+          <!-- Pilot Key Column -->
+          <div class="pilot-key-section">
+            <div class="pilot-key-header">
+              <span class="pilot-key-label">🔑 Lookup Key Columns</span>
+              <button class="btn-text" id="addKeyPairBtn">+ Add Key Pair</button>
+            </div>
+            <p class="dataset-hint">Match records using one or more key column pairs</p>
+            <div class="key-pairs-list" id="keyPairsList">
+              <div class="key-pair-row" data-pair="0">
+                <select class="select-control pilot-key-select" data-pair="0">
+                  <option value="">Pilot key...</option>
+                </select>
+                <span class="key-arrow">↔</span>
+                <select class="select-control ref-key-select" data-pair="0">
+                  <option value="">Reference key...</option>
+                </select>
+                <button class="key-pair-remove hidden" data-pair="0">✕</button>
+              </div>
+            </div>
+
+            <!-- Smart Match Options -->
+            <div class="smart-match-options">
+              <label class="match-type-label">
+                <input type="checkbox" id="pilotFuzzyMatch">
+                <span>🔍 Fuzzy Match (partial text matching)</span>
+              </label>
+              <label class="match-type-label">
+                <input type="checkbox" id="wordBasedMatch">
+                <span>📝 Word-Based Match (any word matches)</span>
+              </label>
+              <label class="match-type-label">
+                <input type="checkbox" id="allWordsMatch">
+                <span>✨ All Words Must Match (order-independent)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Column Formulas (Computed Match Keys) -->
+          <div class="column-formulas-section">
+            <div class="formulas-header">
+              <span class="formulas-label">🔗 Column Formulas (Computed Keys)</span>
+              <button class="btn-text" id="addFormulaBtn">+ Add Formula</button>
+            </div>
+            <p class="dataset-hint">Combine reference columns to match pilot's combined fields</p>
+            <div class="formulas-list" id="formulasList">
+              <!-- Formula rows added dynamically -->
+            </div>
+            <div class="formula-template hidden" id="formulaTemplate">
+              <div class="formula-row">
+                <input type="text" class="formula-name" placeholder="New Column Name">
+                <span>=</span>
+                <select class="formula-col1 select-control"></select>
+                <span>+</span>
+                <input type="text" class="formula-separator" value=" " placeholder="sep">
+                <span>+</span>
+                <select class="formula-col2 select-control"></select>
+                <button class="formula-add-col">+</button>
+                <button class="formula-remove">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Match Preview -->
+          <div class="match-preview-section hidden" id="matchPreviewSection">
+            <div class="preview-header">
+              <span class="preview-label">👁️ Match Preview</span>
+              <span class="preview-stats" id="previewStats"></span>
+            </div>
+            <div class="preview-results" id="previewResults">
+              <!-- Preview results shown here -->
+            </div>
+          </div>
+
+          <!-- Output Priority -->
+
+          <div class="output-priority-section">
+            <div class="output-priority-header">
+              <span class="output-priority-label">⚙️ Output Settings</span>
+            </div>
+            <div class="priority-controls">
+              <div class="priority-row">
+                <span class="priority-name">Records from:</span>
+                <select id="outputRecordsFrom" class="select-control select-sm">
+                  <option value="pilot">Pilot (filtered)</option>
+                  <option value="reference">References (all)</option>
+                  <option value="both">Both merged</option>
+                </select>
+              </div>
+              <div class="priority-row">
+                <span class="priority-name">Data priority:</span>
+                <select id="outputDataPriority" class="select-control select-sm">
+                  <option value="reference">Reference first</option>
+                  <option value="pilot">Pilot first</option>
+                </select>
+              </div>
+            </div>
+            <p class="dataset-hint">• Records from: Which dataset determines output rows<br>• Data priority: Which data
+              to use when columns overlap</p>
+          </div>
+
+
+          <!-- Output Columns Selection -->
+          <div class="output-columns-section">
+            <div class="output-columns-header">
+              <span class="output-columns-label">📋 Output Columns</span>
+              <button class="btn-text" id="selectAllColumns">Select All</button>
+            </div>
+            <p class="dataset-hint">Choose which columns to include in output</p>
+            <div class="output-columns-list" id="outputColumnsList">
+              <!-- Column checkboxes added dynamically -->
+            </div>
+          </div>
+
+          <!-- Pilot Generate -->
+          <div class="pilot-generate-section">
+            <button class="btn btn-primary btn-full" id="btnPilotGenerate">
+              <span>⚡ Generate Pilot Output</span>
+            </button>
+          </div>
+        </div>
+
+
+        <!-- Column Merge Section -->
+        <div class="merge-section">
+          <div class="merge-header">
+            <span class="merge-label">🔀 Column Merge (DS1)</span>
+            <button class="btn-text" id="addMergeRow">+ Add Merge</button>
+          </div>
+          <p class="merge-hint">Combine columns into a new field</p>
+          <div class="merge-list" id="mergeList">
+            <!-- Merge rows will be added here -->
+          </div>
+        </div>
+
+        <!-- Field Mapping Section -->
+        <div class="mapping-section">
+          <div class="mapping-header">
+            <span class="mapping-label">🔗 Field Mapping</span>
+            <button class="btn-text" id="autoMapBtn">Auto-detect</button>
+          </div>
+          <div class="match-type-control">
+            <label class="match-type-label">
+              <input type="checkbox" id="fuzzyMatch">
+              <span>🔍 Fuzzy Match (partial/contains)</span>
+            </label>
+          </div>
+          <div class="mapping-list" id="fieldMappingList">
+            <div class="mapping-empty">
+              <p>Load datasets to create mappings</p>
+            </div>
+          </div>
+          <button class="btn-text" id="addMappingRow">+ Add Mapping</button>
+        </div>
+
+
+        <!-- Sort & Filter Section -->
+        <div class="sort-filter-section">
+          <div class="sort-header">
+            <span class="sort-label">🔄 Sort & Filter</span>
+          </div>
+          <div class="sort-controls">
+            <select id="sortColumn" class="select-control">
+              <option value="">Sort by column...</option>
+            </select>
+            <select id="sortOrder" class="select-control">
+              <option value="asc">A → Z</option>
+              <option value="desc">Z → A</option>
+            </select>
+          </div>
+          <div class="filter-controls">
+            <select id="filterColumn" class="select-control">
+              <option value="">Filter column...</option>
+            </select>
+            <select id="filterOperator" class="select-control">
+              <option value="contains">Contains</option>
+              <option value="equals">Equals</option>
+              <option value="startswith">Starts with</option>
+              <option value="gt">Greater than</option>
+              <option value="lt">Less than</option>
+            </select>
+            <input type="text" id="filterValue" class="input-control" placeholder="Value...">
+          </div>
+        </div>
+
+        <!-- Data Cleaning Section -->
+        <div class="cleaning-section">
+          <div class="cleaning-header">
+            <span class="cleaning-label">🧹 Data Cleaning</span>
+          </div>
+          <div class="cleaning-options">
+            <label class="cleaning-option">
+              <input type="checkbox" id="cleanTrim" checked>
+              <span>Trim whitespace</span>
+            </label>
+            <label class="cleaning-option">
+              <input type="checkbox" id="cleanDedupe">
+              <span>Remove duplicates</span>
+            </label>
+            <label class="cleaning-option">
+              <input type="checkbox" id="cleanCase">
+              <span>Normalize case</span>
+            </label>
+            <select id="cleanCaseType" class="select-control select-sm">
+              <option value="title">Title Case</option>
+              <option value="upper">UPPER</option>
+              <option value="lower">lower</option>
+            </select>
+            <label class="cleaning-option">
+              <input type="checkbox" id="cleanEmpty">
+              <span>Fill empty</span>
+            </label>
+            <input type="text" id="cleanEmptyValue" class="input-control input-sm" placeholder="Default value">
+          </div>
+        </div>
+
+        <!-- Validation Section -->
+        <div class="validation-section">
+          <div class="validation-header">
+            <span class="validation-label">✅ Validation Rules</span>
+            <button class="btn-text" id="addValidationRule">+ Add Rule</button>
+          </div>
+          <div class="validation-list" id="validationList">
+            <!-- Validation rules added dynamically -->
+          </div>
+        </div>
+
+        <!-- Search Section -->
+        <div class="search-section">
+          <div class="search-header">
+            <span class="search-label">🔎 Search</span>
+          </div>
+          <div class="search-controls">
+            <input type="text" id="searchInput" class="input-control" placeholder="Search across datasets...">
+            <label class="search-option">
+              <input type="checkbox" id="searchRegex">
+              <span>Regex</span>
+            </label>
+          </div>
+          <div class="search-results hidden" id="searchResults">
+            <span id="searchResultCount">0 matches</span>
+          </div>
+        </div>
+
+        <!-- Join Type & Generate -->
+        <div class="generate-section">
+          <div class="join-controls">
+            <select id="joinType" class="select-control">
+              <option value="inner">Inner Join (matching only)</option>
+              <option value="left">Left Join (all from DS1)</option>
+              <option value="right">Right Join (all from DS2)</option>
+              <option value="append">Append (stack vertically)</option>
+              <option value="lookup">Lookup (enrich DS1)</option>
+            </select>
+          </div>
+          <div class="generate-controls">
+            <button class="btn btn-primary btn-full" id="btnGenerateOutput">
+              <span>⚡ Generate Output</span>
+            </button>
+            <div class="progress-indicator hidden" id="processProgress">
+              <div class="progress-bar-mini">
+                <div class="progress-fill-mini" id="progressFillMini" style="width: 0%"></div>
+              </div>
+              <span class="progress-text" id="progressText">Processing...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Analytics Dashboard -->
+        <div class="analytics-section hidden" id="analyticsSection">
+          <div class="analytics-header">
+            <span class="analytics-label">📊 Processing Analytics</span>
+            <button class="btn-text" id="btnExportReport">📥 Export Report</button>
+          </div>
+          <div class="analytics-cards">
+            <div class="analytics-card success">
+              <span class="analytics-value" id="analyticsProcessed">0</span>
+              <span class="analytics-name">✅ Processed</span>
+            </div>
+            <div class="analytics-card error">
+              <span class="analytics-value" id="analyticsUnprocessed">0</span>
+              <span class="analytics-name">❌ Unprocessed</span>
+            </div>
+            <div class="analytics-card warning">
+              <span class="analytics-value" id="analyticsWarnings">0</span>
+              <span class="analytics-name">⚠️ Warnings</span>
+            </div>
+          </div>
+          <div class="analytics-reasons" id="analyticsReasons">
+            <!-- Failure reasons listed here -->
+          </div>
+        </div>
+
+        <!-- Output Preview -->
+        <div class="output-section hidden" id="outputSection">
+          <div class="output-header">
+            <span class="output-label">📊 Output</span>
+            <span class="output-count" id="outputCount">0 records</span>
+          </div>
+          <div class="output-preview" id="outputPreview"></div>
+          <div class="output-actions">
+            <button class="btn btn-secondary" id="btnExportCSV">📥 CSV</button>
+            <button class="btn btn-secondary" id="btnExportExcel">📥 Excel</button>
+            <button class="btn btn-primary" id="btnUseForAutofill">Use for AutoFill</button>
+          </div>
+        </div>
+
+        <!-- Debug Console -->
+        <div class="debug-section">
+          <button class="debug-toggle" id="debugToggle">
+            <span>🐛 Debug Console</span>
+            <span class="arrow">▼</span>
+          </button>
+          <div class="debug-panel hidden" id="debugPanel">
+            <div class="debug-controls">
+              <button class="btn-text" id="clearDebugLog">Clear</button>
+              <button class="btn-text" id="exportDebugLog">Export Log</button>
+            </div>
+            <div class="debug-log" id="debugLog">
+              <div class="debug-entry info">Debug mode ready. Processing logs will appear here.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scan Tab Content -->
+
+
+    <div class="tab-content" id="tabScan">
+      <div class="scan-section">
+        <div class="scan-illustration">
+          <span class="scan-icon">🔍</span>
+        </div>
+        <h3 class="scan-title">Form Scanner</h3>
+        <p class="scan-description">Analyze the current page to detect form fields and generate a template file.</p>
+
+        <button class="btn btn-primary btn-full" id="btnScanForm">
+          <span>🔍 Scan Current Page</span>
+        </button>
+
+        <div class="scan-results hidden" id="scanResults">
+          <div class="scan-stats">
+            <div class="stat">
+              <span class="stat-value" id="statFields">0</span>
+              <span class="stat-label">Fields Found</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="statUploads">0</span>
+              <span class="stat-label">File Uploads</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="statRequired">0</span>
+              <span class="stat-label">Required</span>
+            </div>
+          </div>
+
+          <div class="fields-list" id="fieldsList"></div>
+
+          <div class="template-actions">
+            <button class="btn btn-secondary" id="btnDownloadCSV">
+              <span>📥 Download CSV</span>
+            </button>
+            <button class="btn btn-secondary" id="btnDownloadExcel">
+              <span>📥 Download Excel</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mappings Tab Content -->
+    <div class="tab-content" id="tabMappings">
+      <div class="mappings-section">
+        <div class="mappings-header">
+          <span class="mappings-label">Saved Mappings</span>
+          <button class="btn-text" id="addMapping">+ New</button>
+        </div>
+        <p class="mappings-description">Save field mappings per website for automatic reuse.</p>
+        <div class="mappings-list" id="mappingsList">
+          <div class="mappings-empty">
+            <span class="empty-icon">🔗</span>
+            <p>No saved mappings yet</p>
+            <p class="hint">Mappings are auto-saved when you fill forms</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History Tab Content -->
+    <div class="tab-content" id="tabHistory">
+      <div class="history-section">
+        <div class="history-header">
+          <span class="history-label">Recent Fills</span>
+          <div class="history-actions">
+            <button class="btn-text" id="exportHistory">📥 Export</button>
+            <button class="btn-text" id="clearHistory">Clear</button>
+          </div>
+        </div>
+        <div class="history-list" id="historyList">
+          <div class="history-empty">
+            <span class="empty-icon">📋</span>
+            <p>No fill history yet</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Review Modal -->
+    <div class="modal hidden" id="reviewModal">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>📋 Review Before Submit</h3>
+          <button class="btn-icon modal-close" id="closeReview">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="review-list" id="reviewList"></div>
+          <div class="upload-prompts" id="uploadPrompts"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelFill">Cancel</button>
+          <button class="btn btn-success" id="btnConfirmFill">
+            <span>✓ Confirm & Submit</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Toggle -->
+    <div class="settings-section">
+      <button class="settings-toggle" id="settingsToggle">
+        <span>⚙️ Settings</span>
+        <span class="arrow">▼</span>
+      </button>
+      <div class="settings-panel hidden" id="settingsPanel">
+        <label class="setting-item">
+          <input type="checkbox" id="autoAdvance" checked>
+          <span>Auto-advance after submit</span>
+        </label>
+        <label class="setting-item">
+          <input type="checkbox" id="highlightFields" checked>
+          <span>Highlight filled fields</span>
+        </label>
+        <label class="setting-item">
+          <input type="checkbox" id="reviewMode" checked>
+          <span>Review before submit</span>
+        </label>
+        <label class="setting-item">
+          <input type="checkbox" id="showNotifications" checked>
+          <span>Show completion notifications</span>
+        </label>
+        <div class="shortcut-hint">
+          <span>⌨️ Keyboard: Ctrl+Shift+F to quick fill</span>
+        </div>
+        <button class="btn btn-danger btn-small" id="btnReset">
+          Reset All Data
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="branding-footer">
+    Powered by <a href="https://tracktechdigitals.com.ng" target="_blank" rel="noopener noreferrer">TrackTech
+      Digitals</a>
+  </div>
+
+  <script src="../lib/xlsx.min.js"></script>
+  <script src="popup.js" defer></script>
+
+</body>
+
+</html>
