@@ -30,7 +30,7 @@ let state = {
   siteMappings: {},
   pendingRecord: null,
   settings: {
-    autoAdvance: true,
+    autoAdvance: false,
     highlightFields: true,
     reviewMode: true,
     showNotifications: true
@@ -490,7 +490,7 @@ function setupEventListeners() {
 
 // ===== Update Settings =====
 function updateSettings() {
-  state.settings.autoAdvance = elements.autoAdvance?.checked ?? true;
+  state.settings.autoAdvance = elements.autoAdvance?.checked ?? false;
   state.settings.highlightFields = elements.highlightFields?.checked ?? true;
   state.settings.reviewMode = elements.reviewMode?.checked ?? true;
   state.settings.showNotifications = elements.showNotifications?.checked ?? true;

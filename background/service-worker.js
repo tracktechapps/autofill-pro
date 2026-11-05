@@ -280,8 +280,14 @@ async function getCurrentRecord() {
 async function advanceIndex() {
     const result = await chrome.storage.local.get([
         STORAGE_KEYS.DATA,
-        STORAGE_KEYS.CURRENT_INDEX
+        STORAGE_KEYS.CURRENT_INDEX,
+        'autofill_settings'
     ]);
+
+    const settings = result['autofill_settings'] || {};
+    if (!settings.autoAdvance) {
+        return { success: false, reason: 'autoAdvance is disabled' };
+    }
 
     const data = result[STORAGE_KEYS.DATA] || [];
     let currentIndex = result[STORAGE_KEYS.CURRENT_INDEX] || 0;
