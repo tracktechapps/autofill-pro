@@ -399,6 +399,7 @@ function detectFormFields() {
 
 // ===== Field Matching =====
 function matchFieldToHeader(field, headers) {
+    if (!field || !field.identifiers) return null;
     const identifiers = field.identifiers;
 
     // Common field name mappings
@@ -415,7 +416,7 @@ function matchFieldToHeader(field, headers) {
         'name': ['name', 'full_name', 'fullname'],
         'company': ['company', 'organization', 'organisation', 'business'],
         'date': ['date', 'dated', 'appointment_date', 'event_date', 'entry_date', 'recorded_date', 'form_date'],
-        'date_of_birth': ['dob', 'date_of_birth', 'dateofbirth', 'birthdate', 'birth_date', 'birthday', 'bday'],
+        'date_of_birth': ['dob', 'date_of_birth', 'dateofbirth', 'birthdate', 'birth_date', 'birthday', 'birth_day', 'bday'],
         'gender': ['gender', 'sex'],
         'username': ['username', 'user_name', 'user', 'login'],
         'password': ['password', 'pass', 'pwd'],
@@ -427,14 +428,18 @@ function matchFieldToHeader(field, headers) {
         'middle_name': ['middlename', 'middle_name', 'mname']
     };
 
-    // Normalize headers for matching
-    const normalizedHeaders = headers.map(h => ({
+    // Safely normalize headers for matching, filtering out null/undefined/empty
+    const safeHeaders = (Array.isArray(headers) ? headers : [])
+        .filter(h => h !== undefined && h !== null && String(h).trim() !== '');
+
+    const normalizedHeaders = safeHeaders.map(h => ({
         original: h,
-        normalized: h.toLowerCase().replace(/[^a-z0-9]/g, '')
-    }));
+        normalized: String(h).toLowerCase().replace(/[^a-z0-9]/g, '')
+    })).filter(h => h.normalized.length > 0);
 
     for (const identifier of identifiers) {
-        const normalizedId = identifier.replace(/[^a-z0-9]/g, '');
+        const normalizedId = String(identifier).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!normalizedId) continue;
 
         // Direct match
         for (const header of normalizedHeaders) {
@@ -447,7 +452,7 @@ function matchFieldToHeader(field, headers) {
 
         // Check common mappings
         for (const [key, aliases] of Object.entries(mappings)) {
-            if (aliases.some(alias => normalizedId.includes(alias) || alias.includes(normalizedId))) {
+            if (aliases.some(alias => normalizedId.includes(alias.replace(/_/g, '')) || alias.replace(/_/g, '').includes(normalizedId))) {
                 for (const header of normalizedHeaders) {
                     const headerNorm = header.normalized;
                     if (aliases.some(alias => headerNorm.includes(alias.replace(/_/g, '')) || alias.replace(/_/g, '').includes(headerNorm))) {
@@ -466,6 +471,11 @@ function matchFieldToHeader(field, headers) {
 
 // ===== Auto-Fill =====
 async function fillForm(record, headers, settings) {
+    if (!record || typeof record !== 'object') {
+        console.warn('AutoFill Pro: No record data provided to fillForm');
+        return 0;
+    }
+
     const fields = detectFormFields();
     let filledCount = 0;
 
@@ -482,40 +492,59 @@ async function fillForm(record, headers, settings) {
         filled: 0
     };
 
+    const safeHeaders = (Array.isArray(headers) && headers.length > 0)
+        ? headers.filter(h => h !== undefined && h !== null)
+        : Object.keys(record);
+
     console.log('AutoFill Pro: Detected fields:', fields.map(f => ({ name: f.name, id: f.id, type: f.type, identifiers: f.identifiers })));
-    console.log('AutoFill Pro: Headers from CSV:', headers);
+    console.log('AutoFill Pro: Headers:', safeHeaders);
     console.log('AutoFill Pro: Record data:', record);
 
-    // Check if record contains a composite date column for split fields
     const preferredFormat = settings?.preferredDateFormat || settings?.dateFormat || 'DMY';
+
+    // Find composite date column if any
     let compositeDateParts = null;
-    const dateHeaderKey = headers.find(h => /^(dob|date_of_birth|birthdate|birth_date|birthday|date|entry_date)$/i.test(h.replace(/[^a-z0-9]/gi, '')));
+    let dateHeaderKey = null;
+    for (const h of safeHeaders) {
+        if (!h) continue;
+        const normH = String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (/^(dob|dateofbirth|birthdate|birthday|date|entrydate|appointmentdate)$/.test(normH)) {
+            dateHeaderKey = h;
+            break;
+        }
+    }
     if (dateHeaderKey && record[dateHeaderKey]) {
         compositeDateParts = parseAnyDate(record[dateHeaderKey], preferredFormat);
     }
 
     for (const field of fields) {
-        let matchedHeader = matchFieldToHeader(field, headers);
+        let matchedHeader = matchFieldToHeader(field, safeHeaders);
         let value = null;
 
-        // Check if field is a split date component (day, month, year)
+        // Check if field is an explicit split date component (standalone day, month, year)
         const splitType = getSplitDateFieldType(field);
         if (splitType && compositeDateParts && (!matchedHeader || record[matchedHeader] === undefined || record[matchedHeader] === '')) {
             if (splitType === 'day') {
-                value = [String(compositeDateParts.day), String(compositeDateParts.day).padStart(2, '0')];
+                value = field.element.tagName === 'SELECT'
+                    ? [String(compositeDateParts.day), String(compositeDateParts.day).padStart(2, '0')]
+                    : String(compositeDateParts.day);
                 matchedHeader = dateHeaderKey + ' (Day)';
             } else if (splitType === 'month') {
-                value = getMonthCandidates(compositeDateParts.month);
+                value = field.element.tagName === 'SELECT'
+                    ? getMonthCandidates(compositeDateParts.month)
+                    : String(compositeDateParts.month);
                 matchedHeader = dateHeaderKey + ' (Month)';
             } else if (splitType === 'year') {
-                value = [String(compositeDateParts.year), String(compositeDateParts.year).slice(-2)];
+                value = field.element.tagName === 'SELECT'
+                    ? [String(compositeDateParts.year), String(compositeDateParts.year).slice(-2)]
+                    : String(compositeDateParts.year);
                 matchedHeader = dateHeaderKey + ' (Year)';
             }
         } else if (matchedHeader && record[matchedHeader] !== undefined && record[matchedHeader] !== '') {
             value = record[matchedHeader];
         }
 
-        console.log('AutoFill Pro: Field', field.name || field.id, 'type:', field.type, '-> matched header:', matchedHeader);
+        console.log('AutoFill Pro: Field', field.name || field.id, 'type:', field.type, '-> matched header:', matchedHeader, 'value:', value);
 
         if (value !== null && value !== undefined && (Array.isArray(value) ? value.length > 0 : value !== '')) {
             stats.matched++;
@@ -530,7 +559,7 @@ async function fillForm(record, headers, settings) {
                 const type = field.type?.toLowerCase() || 'text';
                 if (type === 'select' || field.element.tagName === 'SELECT') {
                     stats.select++;
-                } else if (['date', 'datetime-local', 'time', 'month', 'week'].includes(type)) {
+                } else if (['date', 'datetime-local', 'time', 'month', 'week'].includes(type) || isDateField(field.element)) {
                     stats.date++;
                 } else if (type === 'checkbox') {
                     stats.checkbox++;
@@ -558,7 +587,6 @@ async function fillForm(record, headers, settings) {
     console.log('AutoFill Pro: Total fields filled:', filledCount);
     console.log('AutoFill Pro: Statistics:', stats);
 
-    // Show completion notification (if enabled)
     if (settings?.showNotifications !== false) {
         showCompletionNotification(stats);
     }
@@ -923,24 +951,39 @@ function formatDateForInput(val, type = "date", preferredFormat = "DMY") {
 // ===== Split Date Field Detection =====
 function getSplitDateFieldType(field) {
     if (!field) return null;
-    const name = (field.name || '').toLowerCase();
-    const id = (field.id || '').toLowerCase();
-    const label = (field.label || '').toLowerCase();
-    const placeholder = (field.placeholder || '').toLowerCase();
-    const combined = [name, id, label, placeholder].join(' ');
+    const element = field.element;
+    const type = (field.type || element?.type || '').toLowerCase();
+    if (['date', 'datetime-local', 'month', 'week', 'time'].includes(type)) {
+        return null;
+    }
 
-    if (/\b(dob_day|birth_day|bday_day|dob-day|birth-day|day_of_birth|birthdate_day)\b/i.test(combined) ||
-        /\b(day|dd)\b/i.test(name) || /\b(day|dd)\b/i.test(id) || /\bday\b/i.test(placeholder)) {
+    const name = (field.name || element?.name || '').toLowerCase();
+    const id = (field.id || element?.id || '').toLowerCase();
+    const placeholder = (field.placeholder || element?.placeholder || '').toLowerCase();
+
+    // If placeholder represents a full date format (e.g. "dd/mm/yyyy", "yyyy-mm-dd"), it's a full date field, NOT split
+    if (/(yyyy|yy).*(mm|m).*(dd|d)|(dd|d).*(mm|m).*(yyyy|yy)|(mm|m).*(dd|d).*(yyyy|yy)/i.test(placeholder)) {
+        return null;
+    }
+
+    // Check for explicit standalone day field: e.g. name="dob_day", name="birth_day", name="day", id="day", name="day_of_birth"
+    if (/^(day|dd|birth_day|dob_day|bday_day|dob-day|birth-day|day_of_birth|birthdate_day)$/i.test(name) ||
+        /^(day|dd|birth_day|dob_day|bday_day|dob-day|birth-day|day_of_birth|birthdate_day)$/i.test(id) ||
+        /(^|[^a-z])(dob_day|birth_day|day_of_birth)([^a-z]|$)/i.test(name + ' ' + id)) {
         return 'day';
     }
 
-    if (/\b(dob_month|birth_month|bday_month|dob-month|birth-month|month_of_birth|birthdate_month)\b/i.test(combined) ||
-        /\b(month|mm)\b/i.test(name) || /\b(month|mm)\b/i.test(id) || /\bmonth\b/i.test(placeholder)) {
+    // Check for explicit standalone month field: e.g. name="dob_month", name="birth_month", name="month", id="month", name="month_of_birth"
+    if (/^(month|mm|birth_month|dob_month|bday_month|dob-month|birth-month|month_of_birth|birthdate_month)$/i.test(name) ||
+        /^(month|mm|birth_month|dob_month|bday_month|dob-month|birth-month|month_of_birth|birthdate_month)$/i.test(id) ||
+        /(^|[^a-z])(dob_month|birth_month|month_of_birth)([^a-z]|$)/i.test(name + ' ' + id)) {
         return 'month';
     }
 
-    if (/\b(dob_year|birth_year|bday_year|dob-year|birth-year|year_of_birth|birthdate_year)\b/i.test(combined) ||
-        /\b(year|yyyy|yy)\b/i.test(name) || /\b(year|yyyy|yy)\b/i.test(id) || /\byear\b/i.test(placeholder)) {
+    // Check for explicit standalone year field: e.g. name="dob_year", name="birth_year", name="year", id="year", name="year_of_birth"
+    if (/^(year|yyyy|yy|birth_year|dob_year|bday_year|dob-year|birth-year|year_of_birth|birthdate_year)$/i.test(name) ||
+        /^(year|yyyy|yy|birth_year|dob_year|bday_year|dob-year|birth-year|year_of_birth|birthdate_year)$/i.test(id) ||
+        /(^|[^a-z])(dob_year|birth_year|year_of_birth)([^a-z]|$)/i.test(name + ' ' + id)) {
         return 'year';
     }
 
@@ -952,8 +995,8 @@ function isDateField(element) {
     const type = element.type?.toLowerCase();
     if (["date", "datetime-local", "time", "month", "week"].includes(type)) return true;
 
-    // Do not treat split day/month/year components as single date fields
-    if (getSplitDateFieldType({ name: element.name, id: element.id, placeholder: element.placeholder })) {
+    // Do not treat explicit standalone split day/month/year components as single date fields
+    if (getSplitDateFieldType({ element, name: element.name, id: element.id, placeholder: element.placeholder })) {
         return false;
     }
 
@@ -961,9 +1004,9 @@ function isDateField(element) {
     const id = (element.id || "").toLowerCase();
     const placeholder = (element.placeholder || "").toLowerCase();
     const className = (element.className || "").toString().toLowerCase();
-    const dataDate = element.getAttribute("data-date") || element.getAttribute("data-type");
+    const dataDate = (element.getAttribute("data-date") || element.getAttribute("data-type") || "").toLowerCase();
 
-    if (dataDate && dataDate.toLowerCase().includes("date")) return true;
+    if (dataDate && dataDate.includes("date")) return true;
     if (className.includes("datepicker") || className.includes("date-picker") || className.includes("flatpickr")) return true;
     if (/\b(yyyy|mm|dd)\b/i.test(placeholder)) return true;
     if (/\b(dob|birthdate|birth_date|date_of_birth|appointment_date|expiry_date|issue_date|start_date|end_date)\b/i.test(name) ||
@@ -983,8 +1026,6 @@ async function fillField(element, value, settings) {
 
     // Focus the element first
     element.focus();
-
-    // Small delay to ensure focus is registered
     await new Promise(r => setTimeout(r, 50));
 
     if (tagName === "select") {
@@ -997,13 +1038,31 @@ async function fillField(element, value, settings) {
     } else if (["date", "datetime-local", "time", "month", "week"].includes(type) || isDateField(element)) {
         await fillDateTimeField(element, value, type || "date", settings);
     } else {
-        // Regular text input
-        element.value = value;
+        // Regular text / textarea input
+        const stringValue = Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
 
-        // Dispatch multiple events for framework compatibility
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-        element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+        try {
+            const proto = Object.getPrototypeOf(element);
+            const descriptor = Object.getOwnPropertyDescriptor(proto, "value") ||
+                               Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
+            if (descriptor && descriptor.set) {
+                descriptor.set.call(element, stringValue);
+            } else {
+                element.value = stringValue;
+            }
+        } catch (e) {
+            element.value = stringValue;
+        }
+
+        const tracker = element._valueTracker;
+        if (tracker) {
+            tracker.setValue("");
+        }
+
+        // Dispatch multiple events for React, Vue, Angular compatibility
+        element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, composed: true }));
     }
 
     // Blur to trigger validation
@@ -1012,38 +1071,41 @@ async function fillField(element, value, settings) {
 }
 
 function fillSelect(element, value) {
-    const candidates = Array.isArray(value) ? value : [value];
-    const normalizedCandidates = candidates.map(c => String(c ?? '').toLowerCase().trim()).filter(Boolean);
-    console.log("AutoFill Pro: Filling select", element.name || element.id, "with candidates:", normalizedCandidates);
-    console.log("AutoFill Pro: Available options:", Array.from(element.options).map(o => ({ text: o.text, value: o.value })));
+    if (!element || !element.options || element.options.length === 0) return false;
 
-    // First try exact match on value or text for any candidate
+    const candidates = Array.isArray(value) ? value : [value];
+    const normalizedCandidates = candidates
+        .map(c => String(c ?? '').toLowerCase().trim())
+        .filter(c => c.length > 0);
+
+    console.log("AutoFill Pro: Filling select", element.name || element.id, "with candidates:", normalizedCandidates);
+
+    // 1. Exact match on value or text
     for (const cand of normalizedCandidates) {
         for (const option of element.options) {
-            const optionText = option.text.toLowerCase().trim();
-            const optionValue = option.value.toLowerCase().trim();
+            const optVal = option.value.toLowerCase().trim();
+            const optText = option.text.toLowerCase().trim();
 
-            if (optionValue === cand || optionText === cand) {
+            if (optVal === cand || optText === cand) {
                 console.log("AutoFill Pro: Exact match found:", option.value);
                 element.value = option.value;
-                element.dispatchEvent(new Event("change", { bubbles: true }));
+                element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
                 return true;
             }
         }
     }
 
-    // Then try partial/contains match for any candidate
+    // 2. Contains match
     for (const cand of normalizedCandidates) {
         for (const option of element.options) {
-            const optionText = option.text.toLowerCase().trim();
-            const optionValue = option.value.toLowerCase().trim();
+            const optVal = option.value.toLowerCase().trim();
+            const optText = option.text.toLowerCase().trim();
 
-            if ((cand.length > 2 && (optionText.includes(cand) || optionValue.includes(cand))) ||
-                (optionText.length > 2 && cand.includes(optionText)) ||
-                (optionValue.length > 2 && cand.includes(optionValue))) {
-                console.log("AutoFill Pro: Partial match found:", option.value);
+            if (optText.includes(cand) || optVal.includes(cand) ||
+                (cand.length > 3 && (cand.includes(optText) || cand.includes(optVal)))) {
+                console.log("AutoFill Pro: Match found:", option.value);
                 element.value = option.value;
-                element.dispatchEvent(new Event("change", { bubbles: true }));
+                element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
                 return true;
             }
         }
@@ -1059,7 +1121,7 @@ function fillCheckbox(element, value) {
 
     if (element.checked !== shouldCheck) {
         element.checked = shouldCheck;
-        element.dispatchEvent(new Event("change", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
     }
 }
 
@@ -1069,7 +1131,7 @@ function fillRadio(element, value) {
 
     if (radioValue === normalizedValue || normalizedValue.includes(radioValue) || radioValue.includes(normalizedValue)) {
         element.checked = true;
-        element.dispatchEvent(new Event("change", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
     }
 }
 

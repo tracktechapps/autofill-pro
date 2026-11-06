@@ -1234,7 +1234,7 @@ async function detectFileUploads() {
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]) {
-      const response = await chrome.tabs.sendMessage(tabs[0].id, {
+      const response = await sendMessageToTab(tabs[0].id, {
         type: 'GET_FILE_UPLOADS'
       });
 
@@ -1330,6 +1330,30 @@ async function fillCurrentRecord() {
   await fillCurrentRecordWithData(record);
 }
 
+// ===== Safe Message Sender with Auto-Injection =====
+async function sendMessageToTab(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    if (error.message?.includes('Receiving end does not exist') ||
+        error.message?.includes('Could not establish connection')) {
+      console.log('AutoFill Pro: Content script not found in tab, auto-injecting...');
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['content/autofill.js']
+        });
+        await new Promise(r => setTimeout(r, 200));
+        return await chrome.tabs.sendMessage(tabId, message);
+      } catch (injectErr) {
+        console.error('AutoFill Pro: Auto-injection failed:', injectErr);
+        throw injectErr;
+      }
+    }
+    throw error;
+  }
+}
+
 async function fillCurrentRecordWithData(record) {
   if (!record) {
     console.error('No record data to fill');
@@ -1339,25 +1363,34 @@ async function fillCurrentRecordWithData(record) {
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]) {
+      const headersToSend = (Array.isArray(state.headers) && state.headers.length > 0)
+        ? state.headers
+        : Object.keys(record);
+
+      const effectiveSettings = {
+        ...state.settings,
+        preferredDateFormat: getEffectiveDateFormat()
+      };
+
       if (state.fileUploads && state.fileUploads.length > 0) {
-        await chrome.tabs.sendMessage(tabs[0].id, {
+        await sendMessageToTab(tabs[0].id, {
           type: 'FILL_FORM_WITH_UPLOADS',
           payload: {
             record: record,
-            headers: state.headers,
-            settings: { ...state.settings, preferredDateFormat: getEffectiveDateFormat() },
+            headers: headersToSend,
+            settings: effectiveSettings,
             fileUploads: state.fileUploads,
             currentIndex: state.currentIndex,
             totalRecords: state.data.length
           }
         });
       } else {
-        await chrome.tabs.sendMessage(tabs[0].id, {
+        await sendMessageToTab(tabs[0].id, {
           type: 'FILL_FORM',
           payload: {
             record: record,
-            headers: state.headers,
-            settings: { ...state.settings, preferredDateFormat: getEffectiveDateFormat() },
+            headers: headersToSend,
+            settings: effectiveSettings,
             currentIndex: state.currentIndex,
             totalRecords: state.data.length
           }
@@ -1388,7 +1421,7 @@ async function scanCurrentForm() {
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]) {
-      const response = await chrome.tabs.sendMessage(tabs[0].id, {
+      const response = await sendMessageToTab(tabs[0].id, {
         type: 'SCAN_FORM'
       });
 
