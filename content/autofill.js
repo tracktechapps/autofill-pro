@@ -415,7 +415,7 @@ function matchFieldToHeader(field, headers) {
         'name': ['name', 'full_name', 'fullname'],
         'company': ['company', 'organization', 'organisation', 'business'],
         'date': ['date', 'dated', 'appointment_date', 'event_date', 'entry_date', 'recorded_date', 'form_date'],
-        'date_of_birth': ['dob', 'date_of_birth', 'dateofbirth', 'birthdate', 'birth_date', 'birthday', 'birth_day', 'bday'],
+        'date_of_birth': ['dob', 'date_of_birth', 'dateofbirth', 'birthdate', 'birth_date', 'birthday', 'bday'],
         'gender': ['gender', 'sex'],
         'username': ['username', 'user_name', 'user', 'login'],
         'password': ['password', 'pass', 'pwd'],
@@ -486,12 +486,38 @@ async function fillForm(record, headers, settings) {
     console.log('AutoFill Pro: Headers from CSV:', headers);
     console.log('AutoFill Pro: Record data:', record);
 
+    // Check if record contains a composite date column for split fields
+    const preferredFormat = settings?.preferredDateFormat || settings?.dateFormat || 'DMY';
+    let compositeDateParts = null;
+    const dateHeaderKey = headers.find(h => /^(dob|date_of_birth|birthdate|birth_date|birthday|date|entry_date)$/i.test(h.replace(/[^a-z0-9]/gi, '')));
+    if (dateHeaderKey && record[dateHeaderKey]) {
+        compositeDateParts = parseAnyDate(record[dateHeaderKey], preferredFormat);
+    }
+
     for (const field of fields) {
-        const matchedHeader = matchFieldToHeader(field, headers);
+        let matchedHeader = matchFieldToHeader(field, headers);
+        let value = null;
+
+        // Check if field is a split date component (day, month, year)
+        const splitType = getSplitDateFieldType(field);
+        if (splitType && compositeDateParts && (!matchedHeader || record[matchedHeader] === undefined || record[matchedHeader] === '')) {
+            if (splitType === 'day') {
+                value = [String(compositeDateParts.day), String(compositeDateParts.day).padStart(2, '0')];
+                matchedHeader = dateHeaderKey + ' (Day)';
+            } else if (splitType === 'month') {
+                value = getMonthCandidates(compositeDateParts.month);
+                matchedHeader = dateHeaderKey + ' (Month)';
+            } else if (splitType === 'year') {
+                value = [String(compositeDateParts.year), String(compositeDateParts.year).slice(-2)];
+                matchedHeader = dateHeaderKey + ' (Year)';
+            }
+        } else if (matchedHeader && record[matchedHeader] !== undefined && record[matchedHeader] !== '') {
+            value = record[matchedHeader];
+        }
+
         console.log('AutoFill Pro: Field', field.name || field.id, 'type:', field.type, '-> matched header:', matchedHeader);
 
-        if (matchedHeader && record[matchedHeader] !== undefined && record[matchedHeader] !== '') {
-            const value = record[matchedHeader];
+        if (value !== null && value !== undefined && (Array.isArray(value) ? value.length > 0 : value !== '')) {
             stats.matched++;
             console.log('AutoFill Pro: Filling field', field.name || field.id, 'with value:', value);
 
@@ -678,25 +704,52 @@ function showCompletionNotification(stats) {
 }
 
 // ===== Date Parsing and Formatting Helpers =====
-function parseAnyDate(val) {
+const MONTH_NAMES = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+    may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+    sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12
+};
+
+const MONTH_NAMES_LIST = [
+    '', 'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+function getMonthCandidates(monthNum) {
+    if (!monthNum || monthNum < 1 || monthNum > 12) return [];
+    const full = MONTH_NAMES_LIST[monthNum];
+    const short = full.slice(0, 3);
+    return [
+        String(monthNum),
+        String(monthNum).padStart(2, '0'),
+        full,
+        short,
+        full.toLowerCase(),
+        short.toLowerCase()
+    ];
+}
+
+function parseAnyDate(val, preferredFormat = 'DMY') {
     if (val === undefined || val === null || val === "") return null;
 
     if (val instanceof Date) {
         if (isNaN(val.getTime())) return null;
+        const isUtcMidnight = val.getUTCHours() === 0 && val.getUTCMinutes() === 0 && val.getUTCSeconds() === 0 &&
+                              (val.getHours() !== 0 || val.getMinutes() !== 0);
         return {
-            year: val.getFullYear(),
-            month: val.getMonth() + 1,
-            day: val.getDate(),
-            hours: val.getHours(),
-            minutes: val.getMinutes(),
-            seconds: val.getSeconds()
+            year: isUtcMidnight ? val.getUTCFullYear() : val.getFullYear(),
+            month: isUtcMidnight ? val.getUTCMonth() + 1 : val.getMonth() + 1,
+            day: isUtcMidnight ? val.getUTCDate() : val.getDate(),
+            hours: isUtcMidnight ? 0 : val.getHours(),
+            minutes: isUtcMidnight ? 0 : val.getMinutes(),
+            seconds: isUtcMidnight ? 0 : val.getSeconds()
         };
     }
 
     // Number or numeric string: Excel serial date or Unix timestamp
     if (typeof val === "number" || (typeof val === "string" && /^\d+(\.\d+)?$/.test(val.trim()))) {
         const num = Number(val);
-        // Excel serial date range: ~1000 to ~100000 (e.g. 33008 = 1990-05-15, 45230 = 2023-10-31)
+        // Excel serial date range: ~1000 to ~100000
         if (num > 1000 && num < 100000) {
             const excelEpochMs = Date.UTC(1899, 11, 30);
             const ms = Math.round(num * 86400 * 1000);
@@ -710,7 +763,6 @@ function parseAnyDate(val) {
                 seconds: d.getUTCSeconds()
             };
         } else if (num >= 1000000000 && num <= 9999999999) {
-            // 10-digit Unix timestamp (seconds)
             const d = new Date(num * 1000);
             return {
                 year: d.getUTCFullYear(),
@@ -721,7 +773,6 @@ function parseAnyDate(val) {
                 seconds: d.getUTCSeconds()
             };
         } else if (num >= 1000000000000 && num <= 9999999999999) {
-            // 13-digit Unix timestamp (ms)
             const d = new Date(num);
             return {
                 year: d.getUTCFullYear(),
@@ -737,7 +788,7 @@ function parseAnyDate(val) {
     const str = String(val).trim();
 
     // 1. ISO date: YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD (with optional time)
-    const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
     if (isoMatch) {
         return {
             year: parseInt(isoMatch[1], 10),
@@ -749,14 +800,53 @@ function parseAnyDate(val) {
         };
     }
 
-    // 2. DD/MM/YYYY, MM/DD/YYYY, DD-MM-YYYY, DD.MM.YYYY
-    const dmyMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    // 2. Text month formats: e.g. '05-Nov-1990', '5 Nov 1990', '5th November 1990'
+    const dMonthYMatch = str.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s\-_/]+([A-Za-z]+)[\s\-_/,]+(\d{2,4})(?:[T\s](\d{1,2}):(\d{1,2}))?/i);
+    if (dMonthYMatch) {
+        const monthKey = dMonthYMatch[2].toLowerCase().substring(0, 3);
+        const m = MONTH_NAMES[dMonthYMatch[2].toLowerCase()] || MONTH_NAMES[monthKey];
+        if (m) {
+            let y = parseInt(dMonthYMatch[3], 10);
+            if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
+            return {
+                year: y,
+                month: m,
+                day: parseInt(dMonthYMatch[1], 10),
+                hours: dMonthYMatch[4] ? parseInt(dMonthYMatch[4], 10) : 0,
+                minutes: dMonthYMatch[5] ? parseInt(dMonthYMatch[5], 10) : 0,
+                seconds: 0
+            };
+        }
+    }
+
+    // Text month formats: e.g. 'Nov 5, 1990', 'November 05 1990'
+    const monthDYMatch = str.match(/^([A-Za-z]+)[\s\-_/]+(\d{1,2})(?:st|nd|rd|th)?[\s\-_/,]+(\d{2,4})(?:[T\s](\d{1,2}):(\d{1,2}))?/i);
+    if (monthDYMatch) {
+        const monthKey = monthDYMatch[1].toLowerCase().substring(0, 3);
+        const m = MONTH_NAMES[monthDYMatch[1].toLowerCase()] || MONTH_NAMES[monthKey];
+        if (m) {
+            let y = parseInt(monthDYMatch[3], 10);
+            if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
+            return {
+                year: y,
+                month: m,
+                day: parseInt(monthDYMatch[2], 10),
+                hours: monthDYMatch[4] ? parseInt(monthDYMatch[4], 10) : 0,
+                minutes: monthDYMatch[5] ? parseInt(monthDYMatch[5], 10) : 0,
+                seconds: 0
+            };
+        }
+    }
+
+    // 3. Delimited numeric dates: DD/MM/YYYY or MM/DD/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const dmyMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
     if (dmyMatch) {
         const p1 = parseInt(dmyMatch[1], 10);
         const p2 = parseInt(dmyMatch[2], 10);
-        const y = parseInt(dmyMatch[3], 10);
-        let m, d;
+        let y = parseInt(dmyMatch[3], 10);
+        if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
 
+        let m, d;
         if (p1 > 12 && p2 <= 12) {
             d = p1;
             m = p2;
@@ -764,8 +854,13 @@ function parseAnyDate(val) {
             m = p1;
             d = p2;
         } else {
-            m = p1;
-            d = p2;
+            if (preferredFormat === 'MDY') {
+                m = p1;
+                d = p2;
+            } else {
+                d = p1;
+                m = p2;
+            }
         }
         return {
             year: y,
@@ -777,51 +872,90 @@ function parseAnyDate(val) {
         };
     }
 
-    // 3. Natural language strings like "May 15, 1990", "15 May 1990"
-    const parsed = new Date(str);
-    if (!isNaN(parsed.getTime())) {
-        return {
-            year: parsed.getFullYear(),
-            month: parsed.getMonth() + 1,
-            day: parsed.getDate(),
-            hours: parsed.getHours(),
-            minutes: parsed.getMinutes(),
-            seconds: parsed.getSeconds()
-        };
-    }
-
     return null;
 }
 
-function formatDateForInput(val, type = "date") {
-    const parts = parseAnyDate(val);
-    if (!parts) return String(val ?? "");
-
+function formatDateForTarget(parts, element, type = "date", preferredFormat = "DMY") {
+    if (!parts) return "";
     const y = String(parts.year).padStart(4, "0");
     const m = String(parts.month).padStart(2, "0");
     const d = String(parts.day).padStart(2, "0");
-    const hh = String(parts.hours).padStart(2, "0");
-    const mm = String(parts.minutes).padStart(2, "0");
+    const hh = String(parts.hours || 0).padStart(2, "0");
+    const mm = String(parts.minutes || 0).padStart(2, "0");
 
-    if (type === "date") {
+    const inputType = (element?.type || type || "date").toLowerCase();
+    if (inputType === "date") {
         return `${y}-${m}-${d}`;
-    } else if (type === "datetime-local") {
+    } else if (inputType === "datetime-local") {
         return `${y}-${m}-${d}T${hh}:${mm}`;
-    } else if (type === "time") {
+    } else if (inputType === "time") {
         return `${hh}:${mm}`;
-    } else if (type === "month") {
+    } else if (inputType === "month") {
         return `${y}-${m}`;
-    } else if (type === "week") {
+    } else if (inputType === "week") {
         const weekNum = getISOWeek(parts);
         return `${y}-W${String(weekNum).padStart(2, "0")}`;
     }
-    return `${y}-${m}-${d}`;
+
+    // Text inputs (e.g. datepicker attached to <input type="text">)
+    const placeholder = ((element?.placeholder || "") + " " + (element?.getAttribute?.("pattern") || "") + " " + (element?.getAttribute?.("data-date-format") || "")).toLowerCase();
+
+    let sep = "/";
+    if (placeholder.includes("-")) sep = "-";
+    else if (placeholder.includes(".")) sep = ".";
+
+    let format = preferredFormat || "DMY";
+    if (/d{1,2}[-/.]m{1,2}[-/.]y{2,4}/.test(placeholder)) format = "DMY";
+    else if (/m{1,2}[-/.]d{1,2}[-/.]y{2,4}/.test(placeholder)) format = "MDY";
+    else if (/y{4}[-/.]m{1,2}[-/.]d{1,2}/.test(placeholder)) format = "YMD";
+
+    if (format === "MDY") return `${m}${sep}${d}${sep}${y}`;
+    if (format === "YMD") return `${y}${sep === "/" ? "-" : sep}${m}${sep === "/" ? "-" : sep}${d}`;
+    return `${d}${sep}${m}${sep}${y}`;
+}
+
+function formatDateForInput(val, type = "date", preferredFormat = "DMY") {
+    const parts = parseAnyDate(val, preferredFormat);
+    if (!parts) return String(val ?? "");
+    return formatDateForTarget(parts, null, type, preferredFormat);
+}
+
+// ===== Split Date Field Detection =====
+function getSplitDateFieldType(field) {
+    if (!field) return null;
+    const name = (field.name || '').toLowerCase();
+    const id = (field.id || '').toLowerCase();
+    const label = (field.label || '').toLowerCase();
+    const placeholder = (field.placeholder || '').toLowerCase();
+    const combined = [name, id, label, placeholder].join(' ');
+
+    if (/\b(dob_day|birth_day|bday_day|dob-day|birth-day|day_of_birth|birthdate_day)\b/i.test(combined) ||
+        /\b(day|dd)\b/i.test(name) || /\b(day|dd)\b/i.test(id) || /\bday\b/i.test(placeholder)) {
+        return 'day';
+    }
+
+    if (/\b(dob_month|birth_month|bday_month|dob-month|birth-month|month_of_birth|birthdate_month)\b/i.test(combined) ||
+        /\b(month|mm)\b/i.test(name) || /\b(month|mm)\b/i.test(id) || /\bmonth\b/i.test(placeholder)) {
+        return 'month';
+    }
+
+    if (/\b(dob_year|birth_year|bday_year|dob-year|birth-year|year_of_birth|birthdate_year)\b/i.test(combined) ||
+        /\b(year|yyyy|yy)\b/i.test(name) || /\b(year|yyyy|yy)\b/i.test(id) || /\byear\b/i.test(placeholder)) {
+        return 'year';
+    }
+
+    return null;
 }
 
 function isDateField(element) {
     if (!element) return false;
     const type = element.type?.toLowerCase();
     if (["date", "datetime-local", "time", "month", "week"].includes(type)) return true;
+
+    // Do not treat split day/month/year components as single date fields
+    if (getSplitDateFieldType({ name: element.name, id: element.id, placeholder: element.placeholder })) {
+        return false;
+    }
 
     const name = (element.name || "").toLowerCase();
     const id = (element.id || "").toLowerCase();
@@ -861,7 +995,7 @@ async function fillField(element, value, settings) {
     } else if (type === "radio") {
         fillRadio(element, value);
     } else if (["date", "datetime-local", "time", "month", "week"].includes(type) || isDateField(element)) {
-        await fillDateTimeField(element, value, type || "date");
+        await fillDateTimeField(element, value, type || "date", settings);
     } else {
         // Regular text input
         element.value = value;
@@ -878,34 +1012,40 @@ async function fillField(element, value, settings) {
 }
 
 function fillSelect(element, value) {
-    const normalizedValue = value.toString().toLowerCase().trim();
-    console.log("AutoFill Pro: Filling select", element.name || element.id, "with value:", normalizedValue);
+    const candidates = Array.isArray(value) ? value : [value];
+    const normalizedCandidates = candidates.map(c => String(c ?? '').toLowerCase().trim()).filter(Boolean);
+    console.log("AutoFill Pro: Filling select", element.name || element.id, "with candidates:", normalizedCandidates);
     console.log("AutoFill Pro: Available options:", Array.from(element.options).map(o => ({ text: o.text, value: o.value })));
 
-    // First try exact match on value or text
-    for (const option of element.options) {
-        const optionText = option.text.toLowerCase().trim();
-        const optionValue = option.value.toLowerCase().trim();
+    // First try exact match on value or text for any candidate
+    for (const cand of normalizedCandidates) {
+        for (const option of element.options) {
+            const optionText = option.text.toLowerCase().trim();
+            const optionValue = option.value.toLowerCase().trim();
 
-        if (optionValue === normalizedValue || optionText === normalizedValue) {
-            console.log("AutoFill Pro: Exact match found:", option.value);
-            element.value = option.value;
-            element.dispatchEvent(new Event("change", { bubbles: true }));
-            return true;
+            if (optionValue === cand || optionText === cand) {
+                console.log("AutoFill Pro: Exact match found:", option.value);
+                element.value = option.value;
+                element.dispatchEvent(new Event("change", { bubbles: true }));
+                return true;
+            }
         }
     }
 
-    // Then try partial/contains match
-    for (const option of element.options) {
-        const optionText = option.text.toLowerCase().trim();
-        const optionValue = option.value.toLowerCase().trim();
+    // Then try partial/contains match for any candidate
+    for (const cand of normalizedCandidates) {
+        for (const option of element.options) {
+            const optionText = option.text.toLowerCase().trim();
+            const optionValue = option.value.toLowerCase().trim();
 
-        if (optionText.includes(normalizedValue) || normalizedValue.includes(optionText) ||
-            optionValue.includes(normalizedValue) || normalizedValue.includes(optionValue)) {
-            console.log("AutoFill Pro: Partial match found:", option.value);
-            element.value = option.value;
-            element.dispatchEvent(new Event("change", { bubbles: true }));
-            return true;
+            if ((cand.length > 2 && (optionText.includes(cand) || optionValue.includes(cand))) ||
+                (optionText.length > 2 && cand.includes(optionText)) ||
+                (optionValue.length > 2 && cand.includes(optionValue))) {
+                console.log("AutoFill Pro: Partial match found:", option.value);
+                element.value = option.value;
+                element.dispatchEvent(new Event("change", { bubbles: true }));
+                return true;
+            }
         }
     }
 
@@ -933,28 +1073,47 @@ function fillRadio(element, value) {
     }
 }
 
-async function fillDateTimeField(element, value, type = "date") {
-    const formattedValue = formatDateForInput(value, type);
-    console.log("AutoFill Pro: Filling date field", type, "raw:", value, "formatted:", formattedValue);
+async function fillDateTimeField(element, value, type = "date", settings = {}) {
+    const preferredFormat = settings?.preferredDateFormat || settings?.dateFormat || 'DMY';
+    const parts = parseAnyDate(value, preferredFormat);
+    const formattedValue = parts ? formatDateForTarget(parts, element, type, preferredFormat) : String(value ?? "");
+    console.log("AutoFill Pro: Filling date field", type, "raw:", value, "parts:", parts, "formatted:", formattedValue);
 
     // Focus the element
     element.focus();
     await new Promise(r => setTimeout(r, 50));
 
-    // Support Flatpickr if attached
-    if (element._flatpickr && typeof element._flatpickr.setDate === "function") {
-        try {
-            element._flatpickr.setDate(formattedValue, true);
-        } catch (e) {
-            console.log("AutoFill Pro: Flatpickr setDate error", e);
-        }
-    }
+    if (parts) {
+        const jsDate = new Date(parts.year, parts.month - 1, parts.day, parts.hours || 0, parts.minutes || 0);
 
-    // Support jQuery UI datepicker if attached
-    if (window.jQuery && typeof window.jQuery(element).datepicker === "function") {
-        try {
-            window.jQuery(element).datepicker("setDate", formattedValue);
-        } catch (e) {}
+        // Support Flatpickr: pass native JS Date to completely eliminate string format confusion
+        if (element._flatpickr && typeof element._flatpickr.setDate === "function") {
+            try {
+                element._flatpickr.setDate(jsDate, true);
+            } catch (e) {
+                try {
+                    element._flatpickr.setDate(formattedValue, true);
+                } catch (err) {}
+            }
+        }
+
+        // Support jQuery UI datepicker: pass native JS Date
+        if (window.jQuery && typeof window.jQuery(element).datepicker === "function") {
+            try {
+                window.jQuery(element).datepicker("setDate", jsDate);
+            } catch (e) {
+                try {
+                    window.jQuery(element).datepicker("setDate", formattedValue);
+                } catch (err) {}
+            }
+        }
+
+        // Support Pikaday if attached
+        if (element._pikaday && typeof element._pikaday.setDate === "function") {
+            try {
+                element._pikaday.setDate(jsDate);
+            } catch (e) {}
+        }
     }
 
     // Set value using prototype setter for React / Vue / Angular compatibility
@@ -971,13 +1130,11 @@ async function fillDateTimeField(element, value, type = "date") {
         element.value = formattedValue;
     }
 
-    // If native date input and has valueAsDate, verify or set
-    if (type === "date" && !element.value && formattedValue) {
+    // If native date input, set valueAsDate (UTC midnight)
+    if (parts && (type === "date" || element.type?.toLowerCase() === "date")) {
         try {
-            const parts = parseAnyDate(formattedValue);
-            if (parts) {
-                element.valueAsDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
-            }
+            element.value = `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+            element.valueAsDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
         } catch (e) {}
     }
 

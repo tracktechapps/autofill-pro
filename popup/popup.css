@@ -560,6 +560,28 @@ body {
   accent-color: var(--accent-primary);
 }
 
+.setting-select-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: default;
+}
+
+.setting-select {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+}
+
+.setting-select:focus {
+  border-color: var(--accent-primary);
+}
+
 /* ===== Utilities ===== */
 .hidden {
   display: none !important;

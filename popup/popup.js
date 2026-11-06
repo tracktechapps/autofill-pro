@@ -33,8 +33,10 @@ let state = {
     autoAdvance: false,
     highlightFields: true,
     reviewMode: true,
-    showNotifications: true
+    showNotifications: true,
+    dateFormat: 'auto'
   },
+  detectedDateFormat: 'DMY',
   // Data Manager state
   dataManager: {
     mode: 'standard', // 'standard' or 'pilot'
@@ -181,6 +183,7 @@ function initializeElements() {
     highlightFields: document.getElementById('highlightFields'),
     reviewMode: document.getElementById('reviewMode'),
     showNotifications: document.getElementById('showNotifications'),
+    dateFormat: document.getElementById('dateFormat'),
     btnReset: document.getElementById('btnReset'),
 
     // Data Manager
@@ -343,6 +346,10 @@ async function loadState() {
     if (elements.highlightFields) elements.highlightFields.checked = state.settings.highlightFields;
     if (elements.reviewMode) elements.reviewMode.checked = state.settings.reviewMode;
     if (elements.showNotifications) elements.showNotifications.checked = state.settings.showNotifications;
+    if (elements.dateFormat) elements.dateFormat.value = state.settings.dateFormat || 'auto';
+    if (state.data && state.data.length > 0) {
+      state.detectedDateFormat = detectDatasetDateFormat(state.data, state.headers);
+    }
   } catch (error) {
     console.error('AutoFill Pro: Error loading state:', error);
   }
@@ -422,6 +429,7 @@ function setupEventListeners() {
   elements.highlightFields?.addEventListener('change', updateSettings);
   elements.reviewMode?.addEventListener('change', updateSettings);
   elements.showNotifications?.addEventListener('change', updateSettings);
+  elements.dateFormat?.addEventListener('change', updateSettings);
   elements.btnReset?.addEventListener('click', resetAllData);
 
   // Data Manager events
@@ -494,7 +502,9 @@ function updateSettings() {
   state.settings.highlightFields = elements.highlightFields?.checked ?? true;
   state.settings.reviewMode = elements.reviewMode?.checked ?? true;
   state.settings.showNotifications = elements.showNotifications?.checked ?? true;
+  state.settings.dateFormat = elements.dateFormat?.value || 'auto';
   saveState();
+  updateUI();
 }
 
 function toggleSettings() {
@@ -649,7 +659,7 @@ function updatePreview() {
       let val = row[header] || '';
       if (/date|dob|birth/i.test(header) && val) {
         const parsed = parseAnyDate(val);
-        if (parsed) val = formatDateForInput(val, 'date');
+        if (parsed) val = formatDateForInput(val, 'display', getEffectiveDateFormat());
       }
       bodyHtml += `<td>${escapeHtml(val)}</td>`;
     }
@@ -730,6 +740,7 @@ async function processSelectedFile(file) {
         state.headers = result.headers;
         state.data = result.data;
         state.currentIndex = 0;
+        state.detectedDateFormat = detectDatasetDateFormat(state.data, state.headers);
         await saveState();
         showFileInfo(file.name, result.data.length);
         updateUI();
@@ -753,6 +764,7 @@ async function processSelectedFile(file) {
         state.headers = result.headers;
         state.data = result.data;
         state.currentIndex = 0;
+        state.detectedDateFormat = detectDatasetDateFormat(state.data, state.headers);
         await saveState();
         showFileInfo(file.name, result.data.length);
         updateUI();
@@ -764,19 +776,72 @@ async function processSelectedFile(file) {
   }
 }
 
-// ===== Date Parsing and Formatting Helpers =====
-function parseAnyDate(val) {
+// ===== Smart Date Helpers & Parsers =====
+const MONTH_NAMES = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12
+};
+
+function getEffectiveDateFormat() {
+  if (state.settings?.dateFormat && state.settings.dateFormat !== 'auto') {
+    return state.settings.dateFormat;
+  }
+  return state.detectedDateFormat || 'DMY';
+}
+
+function detectDatasetDateFormat(data, headers) {
+  let dmyEvidence = 0;
+  let mdyEvidence = 0;
+
+  if (!Array.isArray(data) || data.length === 0) return 'DMY';
+
+  const checkValue = (val) => {
+    if (!val || typeof val !== 'string') return;
+    const str = val.trim();
+    const match = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.]\d{2,4}/);
+    if (match) {
+      const p1 = parseInt(match[1], 10);
+      const p2 = parseInt(match[2], 10);
+      if (p1 > 12 && p2 <= 12) {
+        dmyEvidence++;
+      } else if (p2 > 12 && p1 <= 12) {
+        mdyEvidence++;
+      }
+    }
+  };
+
+  const sampleLimit = Math.min(data.length, 300);
+  for (let i = 0; i < sampleLimit; i++) {
+    const row = data[i];
+    if (!row) continue;
+    if (Array.isArray(row)) {
+      row.forEach(checkValue);
+    } else if (typeof row === 'object') {
+      Object.values(row).forEach(checkValue);
+    }
+  }
+
+  if (dmyEvidence > mdyEvidence) return 'DMY';
+  if (mdyEvidence > dmyEvidence) return 'MDY';
+  return 'DMY';
+}
+
+function parseAnyDate(val, preferredFormat = null) {
   if (val === undefined || val === null || val === '') return null;
+  const pref = preferredFormat || getEffectiveDateFormat();
 
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null;
+    const isUtcMidnight = val.getUTCHours() === 0 && val.getUTCMinutes() === 0 && val.getUTCSeconds() === 0 &&
+                          (val.getHours() !== 0 || val.getMinutes() !== 0);
     return {
-      year: val.getFullYear(),
-      month: val.getMonth() + 1,
-      day: val.getDate(),
-      hours: val.getHours(),
-      minutes: val.getMinutes(),
-      seconds: val.getSeconds()
+      year: isUtcMidnight ? val.getUTCFullYear() : val.getFullYear(),
+      month: isUtcMidnight ? val.getUTCMonth() + 1 : val.getMonth() + 1,
+      day: isUtcMidnight ? val.getUTCDate() : val.getDate(),
+      hours: isUtcMidnight ? 0 : val.getHours(),
+      minutes: isUtcMidnight ? 0 : val.getMinutes(),
+      seconds: isUtcMidnight ? 0 : val.getSeconds()
     };
   }
 
@@ -818,7 +883,9 @@ function parseAnyDate(val) {
   }
 
   const str = String(val).trim();
-  const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+
+  // 1. ISO date: YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
   if (isoMatch) {
     return {
       year: parseInt(isoMatch[1], 10),
@@ -830,19 +897,69 @@ function parseAnyDate(val) {
     };
   }
 
-  const dmyMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  // 2. Text month formats: e.g. '05-Nov-1990', '5 Nov 1990', '5th November 1990'
+  const dMonthYMatch = str.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s\-_/]+([A-Za-z]+)[\s\-_/,]+(\d{2,4})(?:[T\s](\d{1,2}):(\d{1,2}))?/i);
+  if (dMonthYMatch) {
+    const monthKey = dMonthYMatch[2].toLowerCase().substring(0, 3);
+    const m = MONTH_NAMES[dMonthYMatch[2].toLowerCase()] || MONTH_NAMES[monthKey];
+    if (m) {
+      let y = parseInt(dMonthYMatch[3], 10);
+      if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
+      return {
+        year: y,
+        month: m,
+        day: parseInt(dMonthYMatch[1], 10),
+        hours: dMonthYMatch[4] ? parseInt(dMonthYMatch[4], 10) : 0,
+        minutes: dMonthYMatch[5] ? parseInt(dMonthYMatch[5], 10) : 0,
+        seconds: 0
+      };
+    }
+  }
+
+  // Text month formats: e.g. 'Nov 5, 1990', 'November 05 1990'
+  const monthDYMatch = str.match(/^([A-Za-z]+)[\s\-_/]+(\d{1,2})(?:st|nd|rd|th)?[\s\-_/,]+(\d{2,4})(?:[T\s](\d{1,2}):(\d{1,2}))?/i);
+  if (monthDYMatch) {
+    const monthKey = monthDYMatch[1].toLowerCase().substring(0, 3);
+    const m = MONTH_NAMES[monthDYMatch[1].toLowerCase()] || MONTH_NAMES[monthKey];
+    if (m) {
+      let y = parseInt(monthDYMatch[3], 10);
+      if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
+      return {
+        year: y,
+        month: m,
+        day: parseInt(monthDYMatch[2], 10),
+        hours: monthDYMatch[4] ? parseInt(monthDYMatch[4], 10) : 0,
+        minutes: monthDYMatch[5] ? parseInt(monthDYMatch[5], 10) : 0,
+        seconds: 0
+      };
+    }
+  }
+
+  // 3. Delimited numeric dates: DD/MM/YYYY or MM/DD/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
   if (dmyMatch) {
     const p1 = parseInt(dmyMatch[1], 10);
     const p2 = parseInt(dmyMatch[2], 10);
-    const y = parseInt(dmyMatch[3], 10);
+    let y = parseInt(dmyMatch[3], 10);
+    if (y < 100) y = y < 50 ? 2000 + y : 1900 + y;
+
     let m, d;
     if (p1 > 12 && p2 <= 12) {
-      d = p1; m = p2;
+      d = p1;
+      m = p2;
     } else if (p2 > 12 && p1 <= 12) {
-      m = p1; d = p2;
+      m = p1;
+      d = p2;
     } else {
-      m = p1; d = p2;
+      if (pref === 'MDY') {
+        m = p1;
+        d = p2;
+      } else {
+        d = p1;
+        m = p2;
+      }
     }
+
     return {
       year: y,
       month: m,
@@ -853,23 +970,12 @@ function parseAnyDate(val) {
     };
   }
 
-  const parsed = new Date(str);
-  if (!isNaN(parsed.getTime())) {
-    return {
-      year: parsed.getFullYear(),
-      month: parsed.getMonth() + 1,
-      day: parsed.getDate(),
-      hours: parsed.getHours(),
-      minutes: parsed.getMinutes(),
-      seconds: parsed.getSeconds()
-    };
-  }
-
   return null;
 }
 
-function formatDateForInput(val, type = 'date') {
-  const parts = parseAnyDate(val);
+function formatDateForInput(val, type = 'date', preferredFormat = null) {
+  const pref = preferredFormat || getEffectiveDateFormat();
+  const parts = parseAnyDate(val, pref);
   if (!parts) return String(val ?? '');
 
   const y = String(parts.year).padStart(4, '0');
@@ -886,6 +992,10 @@ function formatDateForInput(val, type = 'date') {
     return `${hh}:${mm}`;
   } else if (type === 'month') {
     return `${y}-${m}`;
+  } else if (type === 'display') {
+    if (pref === 'MDY') return `${m}/${d}/${y}`;
+    if (pref === 'YMD') return `${y}-${m}-${d}`;
+    return `${d}/${m}/${y}`;
   }
   return `${y}-${m}-${d}`;
 }
@@ -1170,7 +1280,7 @@ function showReviewModal(record) {
       if (isDate) {
         const parsed = parseAnyDate(value);
         if (parsed) {
-          displayValue = `📅 ${formatDateForInput(value, 'date')}`;
+          displayValue = `📅 ${formatDateForInput(value, 'display', getEffectiveDateFormat())}`;
         }
       }
       reviewHtml += `
@@ -1235,7 +1345,7 @@ async function fillCurrentRecordWithData(record) {
           payload: {
             record: record,
             headers: state.headers,
-            settings: state.settings,
+            settings: { ...state.settings, preferredDateFormat: getEffectiveDateFormat() },
             fileUploads: state.fileUploads,
             currentIndex: state.currentIndex,
             totalRecords: state.data.length
@@ -1247,7 +1357,7 @@ async function fillCurrentRecordWithData(record) {
           payload: {
             record: record,
             headers: state.headers,
-            settings: state.settings,
+            settings: { ...state.settings, preferredDateFormat: getEffectiveDateFormat() },
             currentIndex: state.currentIndex,
             totalRecords: state.data.length
           }
